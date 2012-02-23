@@ -1,0 +1,1198 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1">
+<meta name="viewport" content= "user-scalable=no,initial-scale=1.0,	 maximum-scale=1.0">
+<script type="text/javascript" src="./warpgrid.js"></script>
+<script type="text/javascript">
+    var canvasElement;
+    var ctx;
+    var debugCell;
+    var contentElement;
+    
+    var modes = ["stretch2D", "stretch1D"];
+    var currentMode = "stretch2D"; 
+    
+    var activeWidth;
+    var activeHeight;
+    var winWidth;
+    var winHeight;
+    var absX = 0;
+    var absY = 0;
+    var winX = 0;
+    var winY = 0;
+    Element.prototype.leftTopScreen = function () {
+        var x = this.offsetLeft;
+        var y = this.offsetTop;
+    
+        var element = this.offsetParent;
+    
+        while (element !== null) {
+            x = parseInt (x) + parseInt (element.offsetLeft);
+            y = parseInt (y) + parseInt (element.offsetTop);
+    
+            element = element.offsetParent;
+        }
+    
+        return new Point(x, y);
+    }
+    
+    var imgContent = null;
+    var drawContent = drawContentText;  //drawContentImage;
+    function changeDisplay(disp) {
+        imgContent = null;
+        if(disp === 'text') {
+            drawContent = drawContentText;
+        }
+        else if(disp === 'image') {
+            drawContent = drawContentImage;
+        }
+        else {
+            drawContent = drawContentMixed;
+        }
+        drawContent(0, 0);
+    }
+    
+    var showedWarning = false;
+    function changeMode(m) {
+        currentMode = m;
+        drawContent(0, 0);
+        contentElement.scrollTop = 0;
+        contentElement.scrollLeft = 0;
+        updateTable();
+        var warnDiv = document.getElementById("warning");
+        //if(!showedWarning && (m =="stretch2D")) {
+        //  showedWarning = true;
+        if(m =="stretch2D") {
+            document.getElementById("stretch1DChk").checked = false;
+            document.getElementById("stretch2DChk").checked = true;
+            warnDiv.innerHTML = ("<font color='RED'>Note that 2D warping is a processor intensive function that can take upto "
+                +"a second (or 5, on an iPad) to compute and render every mouse drag in JavaScript. "
+                +"It would be much faster if implemented using WebGL (work in progress). "
+                +"Please drag your mouse slowly to get more effective results.</font>");
+        }
+        else {
+            document.getElementById("stretch1DChk").checked = true;
+            document.getElementById("stretch2DChk").checked = false;
+            warnDiv.innerHTML = "";
+        }
+    }
+    
+    function init() {
+        debugCell = document.getElementById("debugCell");
+    
+        contentElement = document.getElementById("kanvas");
+        activeWidth  = winWidth  = parseInt(contentElement.style.width.split("px")[0]);
+        activeHeight = winHeight = parseInt(contentElement.style.height.split("px")[0]);
+    
+        contentElement.onmouseover=function(){
+            document.getElementsByTagName('body')[0].style.overflow='hidden';
+        }
+        contentElement.onmouseout=function(){
+            document.getElementsByTagName('body')[0].style.overflow='';
+        }            
+    
+        canvasElement = document.getElementById("kanvas");
+        ctx = canvasElement.getContext("2d");
+    
+        var absPt = canvasElement.leftTopScreen();
+        absX = absPt.x;
+        absY = absPt.y;
+    
+        var winPt = canvasElement.leftTopScreen();
+        winX = winPt.x;
+        winY = winPt.y;
+    
+        changeDisplay("image");
+        changeMode("stretch2D");
+    
+        canvasElement.addEventListener("mousedown", onMouseDown, false);
+        canvasElement.addEventListener("mouseup", onMouseUp, false);
+    
+        canvasElement.addEventListener("touchstart", onMouseDown, false);
+        canvasElement.addEventListener("touchend", onMouseUp, false);
+    
+        drawContent(0, 0);
+        
+        var rows = 7;
+        var cols = 7;
+        var srcGrid = new WarpGrid(rows, cols, canvasElement.width, canvasElement.height);
+        var dstGrid = new WarpGrid(rows, cols, canvasElement.width, canvasElement.height);
+        //paintGrid(srcGrid, "#0000FF", 0);
+        generateNxMMesh(rows, cols, 100, 100, 120, 120, winWidth, winHeight, canvasElement.width, canvasElement.height, srcGrid, dstGrid);
+        //paintGrid(srcGrid, "#FF0000", 0);
+        //paintGrid(dstGrid, "#00FF00", 0);
+    }
+    
+    function drawBackground() {
+        ctx.fillStyle = "rgb(100,100,100)";
+        ctx.fillRect(0, 0, canvasElement.width, canvasElement.height);
+    }
+    
+    function getLines(c,phrase,maxPxLength,textStyle) {
+        var wa=phrase.split(" "),
+            phraseArray=[],
+            lastPhrase="",
+            l=maxPxLength,
+            measure=0;
+        c.font = textStyle;
+        for (var i=0;i<wa.length;i++) {
+            var w=wa[i];
+            measure=c.measureText(lastPhrase+w).width;
+            if (measure<l) {
+                lastPhrase+=(" "+w);
+            }else {
+                phraseArray.push(lastPhrase);
+                lastPhrase=w;
+            }
+            if (i===wa.length-1) {
+                phraseArray.push(lastPhrase);
+                break;
+            }
+        }
+        return phraseArray;
+    }
+    
+    var touchPointStyle = "rgb(255,255,255)";
+    var isLightBG = false;
+    var imgURL = "./African_landscape.jpeg";
+    //var imgURL = "./me-at-work.jpeg";
+    
+    var txtContent = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Etiam faucibus viverra ligula a facilisis. Nunc facilisis faucibus urna sed ultrices. Nunc vitae arcu ante. Curabitur semper bibendum ante sed consectetur. Etiam accumsan felis quis risus interdum sed fringilla orci accumsan. In placerat eros eu turpis rhoncus vehicula. In venenatis malesuada velit, eu rutrum libero congue id. Proin in enim sem, at malesuada purus. Nullam convallis sagittis quam nec pulvinar.\n\nDonec vitae nisl ac urna condimentum malesuada pharetra vel sapien. Donec auctor mattis nisl vitae feugiat. Nulla malesuada, nunc condimentum porta porttitor, nulla arcu tincidunt quam, a ullamcorper dolor velit auctor lectus. Quisque rutrum facilisis enim, vel commodo metus pulvinar ac. Pellentesque sed elit sem, at mattis dui. Duis vel felis ac sem rutrum ornare sed in augue. Fusce euismod tempus massa eu auctor. Phasellus leo nibh, consectetur eget fringilla ut, posuere in felis. Duis scelerisque facilisis nisl eu tempus. Pellentesque ultricies eleifend ullamcorper.\n\nDonec vitae nisl ac urna condimentum malesuada pharetra vel sapien. Donec auctor mattis nisl vitae feugiat. Nulla malesuada, nunc condimentum porta porttitor, nulla arcu tincidunt quam, a ullamcorper dolor velit auctor lectus. Quisque rutrum facilisis enim, vel commodo metus pulvinar ac. Pellentesque sed elit sem, at mattis dui. Duis vel felis ac sem rutrum ornare sed in augue. Fusce euismod tempus massa eu auctor. Phasellus leo nibh, consectetur eget fringilla ut, posuere in felis. Duis scelerisque facilisis nisl eu tempus. Pellentesque ultricies eleifend ullamcorper.";
+    
+    function drawContentText(x, y) {
+        if(imgContent == null) {
+            drawBackground();
+            var maxWidth = 400;
+            var bgr = 255;
+            var bgg = 255;
+            var bgb = 255;
+            ctx.fillStyle = "rgb("+bgr+","+bgg+","+bgb+")";
+            touchPointStyle = "rgb("+(350 - bgr)+","+(350 - bgg)+","+(350 - bgb)+")";
+            if(((bgr + bgg + bgb) / 3) > 200) {
+                isLightBG = true;
+            }
+            ctx.fillRect(x, y, canvasElement.width, canvasElement.height);
+            ctx.fillStyle = "Black";
+            ctx.font = "30pt Arial";
+            ctx.fillText("Lorem Ipsum", x + 120, y + 50);
+            ctx.font = "11pt Arial";
+    
+            var txtArray = getLines(ctx, txtContent, maxWidth, ctx.font);
+            //var ht = ctx.measureText(txtArray[0]).height;
+            var ht = 13;
+            //debug("n array="+txtArray.length+" ht="+ht);
+            var brY = 0;
+            for(var j = 0, n = txtArray.length; j < n; j++) {
+                ctx.fillText(txtArray[j], x+50, y + 100 + (j*ht + 5) + brY);
+                if((j + 1) % 10 == 0) {
+                    brY += 10;
+                }
+            }
+            imgContent = ctx.getImageData(0, 0, canvasElement.width, canvasElement.height); 
+            activeWidth  = canvasElement.width;   
+            activeHeight = canvasElement.height;
+        }
+        else {
+            drawBackground();
+            ctx.putImageData(imgContent, x, y);
+        }
+    }
+    
+    function drawContentImage(x, y) {
+        if(imgContent == null) {
+            drawBackground();
+            var maxWidth = 400;
+            var bgr = 255;
+            var bgg = 255;
+            var bgb = 255;
+            ctx.fillStyle = "rgb("+bgr+","+bgg+","+bgb+")";
+            touchPointStyle = "rgb("+(350 - bgr)+","+(350 - bgg)+","+(350 - bgb)+")";
+            if(((bgr + bgg + bgb) / 3) > 200) {
+                isLightBG = true;
+            }
+            ctx.fillRect(x, y, canvasElement.width, canvasElement.height);
+    
+            var img = new Image();  
+            img.onload = function(){  
+                var wdraw = (canvasElement.width);
+                var hdraw = img.height * (wdraw/img.width);
+                ctx.drawImage(img, x, y, wdraw, hdraw);  
+                
+                activeWidth  = wdraw;   
+                activeHeight = hdraw;
+                imgContent = ctx.getImageData(0, 0, canvasElement.width, canvasElement.height); 
+            };  
+            img.src = imgURL;
+        }
+        else {
+            drawBackground();
+            ctx.putImageData(imgContent, x, y);
+        }
+    }
+    
+    function drawContentMixed(x, y) {
+        if(imgContent == null) {
+            drawBackground();
+            var maxWidth = 400;
+            var bgr = 255;
+            var bgg = 255;
+            var bgb = 255;
+            ctx.fillStyle = "rgb("+bgr+","+bgg+","+bgb+")";
+            touchPointStyle = "rgb("+(350 - bgr)+","+(350 - bgg)+","+(350 - bgb)+")";
+            if(((bgr + bgg + bgb) / 3) > 200) {
+                isLightBG = true;
+            }
+            ctx.fillRect(x, y, canvasElement.width, canvasElement.height);
+            ctx.fillStyle = "Black";
+            ctx.font = "30pt Arial";
+            ctx.fillText("Lorem Ipsum", x + 120, y + 50);
+    
+            var img = new Image();  
+            img.onload = function() {
+                var wdraw = 210;
+                var hdraw = img.height * (wdraw/img.width);
+                var yOff = hdraw;
+                var imgMidX = x + (canvasElement.width - wdraw) / 2;
+                ctx.drawImage(img, imgMidX, y + 60, wdraw, hdraw);
+                
+                ctx.font = "10pt Arial";
+                var txtArray = getLines(ctx, txtContent, maxWidth, ctx.font);
+                //var ht = ctx.measureText(txtArray[0]).height;
+                var ht = 12;
+                //debug("n array="+txtArray.length+" ht="+ht);
+                var brY = 0;
+                for(var j = 0, n = txtArray.length; j < n; j++) {
+                    ctx.fillText(txtArray[j], x+50, y + yOff + 100 + (j*ht + 5) + brY);
+                    if((j + 1) % 10 == 0) {
+                        brY += 10;
+                    }
+                }
+                activeWidth  = canvasElement.width;   
+                activeHeight = canvasElement.height;
+                imgContent = ctx.getImageData(0, 0, canvasElement.width, canvasElement.height); 
+            };  
+            img.src = imgURL;
+        }
+        else {
+            drawBackground();
+            ctx.putImageData(imgContent, x, y);
+        }
+    }
+    
+    var startX = 0;            // mouse starting positions
+    var startY = 0;
+    var startScrollLeft = 0;   // scroll starting positions
+    var startScrollTop = 0;
+    var offsetX = 0;           // current element offset
+    var offsetY = 0;
+    var mouseX = 0;           // current mouse coordinates
+    var mouseY = 0;
+    
+    var mouseDown = false;
+    var elasticDeltaT = 10;
+    var elasticDeltaX = 0;
+    var elasticDeltaY = 0;
+    var elasticDistX = 0;
+    var elasticDistY = 0;
+    
+    function debug(str) {
+        if(document.getElementById("showdebug").checked) {
+            debugCell.innerHTML = str +"<br/>" + debugCell.innerHTML;
+        }
+    }
+    
+    function showDebug() {
+        if(document.getElementById("showdebug").checked) {
+            document.getElementById("debug").style.visibility = "visible";
+        }
+        else {
+            document.getElementById("debug").style.visibility = "hidden";
+        }
+        return true;
+    }
+    
+    function Point(x, y) {
+        this.x = x;
+        this.y = y
+    }
+    
+    function updateTable() {
+        document.getElementById("offsetX").innerHTML = offsetX;
+        document.getElementById("offsetY").innerHTML = offsetY;
+        document.getElementById("startX").innerHTML = startX;
+        document.getElementById("startY").innerHTML = startY;
+        document.getElementById("scrollTop").innerHTML = contentElement.scrollTop;
+        document.getElementById("scrollLeft").innerHTML = contentElement.scrollLeft;
+        document.getElementById("mouseX").innerHTML = mouseX;
+        document.getElementById("mouseY").innerHTML = mouseY;
+        document.getElementById("currentMode").innerHTML = currentMode;
+        document.getElementById("stretchStartX").innerHTML = stretchStartX;
+        document.getElementById("stretchStartY").innerHTML = stretchStartY;
+        document.getElementById("stretchPointX").innerHTML = stretchPointX;
+        document.getElementById("stretchPointY").innerHTML = stretchPointY;
+    }
+    
+    function getCursorPosition(e) {
+        var x;
+        var y;
+        if (e.pageX || e.pageY) {
+            x = e.pageX;
+            y = e.pageY;
+        }
+        else {
+            x = e.clientX + document.body.scrollLeft +
+                document.documentElement.scrollLeft;
+            y = e.clientY + document.body.scrollTop +
+                document.documentElement.scrollTop;
+        }
+        x -= winX;  //canvasElement.offsetLeft;
+        y -= winY;  //canvasElement.offsetTop;
+        return new Point(x, y);
+    }
+    
+    var restoreRect = null;
+    var restoreRectX = -1;
+    var restoreRectY = -1;
+    
+    function showTouchPoint(x, y, restoreOnly) {
+        x += contentElement.scrollLeft;
+        y += contentElement.scrollTop;
+        if(restoreOnly && restoreRect) { // && ((x != restoreRectX) || (y != restoreRectY))) {
+            ctx.putImageData(restoreRect, restoreRectX, restoreRectY);
+            restoreRect = null;
+            restoreRectX = -1;
+            restoreRectY = -1;
+            return;
+        }
+    
+        if(document.getElementById("showtouch").checked && (x > 0) && (y > 0)) {
+            var radius = 10;
+            var lw = 1;
+            if(!restoreRect) {//    (x != restoreRectX) || (y != restoreRectY)) {
+                restoreRectX = x - radius - lw;
+                restoreRectY = y - radius - lw;
+                restoreRect = ctx.getImageData(restoreRectX, restoreRectY, radius*2 + lw + 1, radius*2 + lw + 1);
+            }
+            ctx.strokeStyle=touchPointStyle;
+            ctx.lineWidth = lw;
+            ctx.beginPath();
+            ctx.arc(x, y, radius, Math.PI*2, 0, true);
+            ctx.closePath();
+            ctx.stroke();
+        }
+    }
+    
+    function onMouseDown(e) {
+        var pt = getCursorPosition(e);
+        var x = startX = pt.x;
+        var y = startY = pt.y;
+        startScrollLeft = contentElement.scrollLeft;
+        startScrollTop  = contentElement.scrollTop;
+        debug("Mouse down at "+x+","+y+".");
+        canvasElement.addEventListener("mousemove", onMouseMove, false);
+        canvasElement.addEventListener("touchmove", onMouseMove, false);
+        mouseDown = true;
+        showTouchPoint(x, y);
+        updateTable();
+    };
+        
+    function releaseDrag(x, y) {
+        startX = startY = 0;
+        debug("Mouse up at "+x+","+y);
+        canvasElement.removeEventListener("mousemove", onMouseMove);
+        mouseDown = false;
+        if(currentMode == "stretch2D") {
+            if(stretchStartX >= 0) {
+                unstretchContent2D(x, y, true);
+                //showTouchPoint(-1, -1, true);
+            }
+            else {
+                drawContent(0, 0);
+            }
+        }
+        else if(currentMode == "stretch1D") {
+            if(stretchStartX >= 0) {
+                unstretchContent1D(x, y, true);
+                //showTouchPoint(-1, -1, true);
+            }
+            else {
+                drawContent(0, 0);
+            }
+        }
+        updateTable();
+    }
+        
+    function onMouseUp(e) {
+        var pt = getCursorPosition(e);
+        var x = pt.x;
+        var y = pt.y;
+        releaseDrag(x, y);
+    };
+    
+    function onMouseMove(e) {
+        var pt = getCursorPosition(e);
+        var x = mouseX = pt.x;
+        var y = mouseY = pt.y;
+        if((x < 0) || (x >= winWidth)) {
+            //x = mouseX = 0;
+            releaseDrag(x, y);
+            return;
+        }
+        if((y < 0) || (y >= winHeight)) {
+            //y = mouseY = 0;
+            releaseDrag(x, y);
+            return;
+        }
+        var deltaX = x - startX;
+        var deltaY = y - startY;
+        offsetX = deltaX;
+        offsetY = deltaY;
+    
+        var actualScrollTop  = startScrollTop;
+        var actualScrollLeft = startScrollLeft;
+        actualScrollTop  -= offsetY;
+        actualScrollLeft -= offsetX;
+        contentElement.scrollTop  = actualScrollTop;
+        contentElement.scrollLeft = actualScrollLeft;
+        
+        if(currentMode == "stretch2D") {
+            if(stretchStartX < 0) {
+                stretchJustBegun = true;
+                stretchStartX = x  + contentElement.scrollLeft;
+                stretchStartY = y  + contentElement.scrollTop;
+                debug("Stretch started at "+stretchStartX+","+stretchStartY+" as opposed to "+startX+","+startY);
+            }
+            stretchContent2D(x + contentElement.scrollLeft, y + contentElement.scrollTop);
+        }
+        else if(currentMode == "stretch1D") {
+            if(stretchStartX < 0) {
+                stretchJustBegun = true;
+                stretchStartX = x  + contentElement.scrollLeft;
+                stretchStartY = y  + contentElement.scrollTop;
+                debug("Stretch started at "+stretchStartX+","+stretchStartY+" as opposed to "+startX+","+startY);
+            }
+            stretchContent1D(x + contentElement.scrollLeft, y + contentElement.scrollTop);
+        }
+        showTouchPoint(x, y);
+        updateTable();
+        //debug("Mouse moved ("+deltaX+","+deltaY+") to "+x+","+y+", offset=("+offsetX+", "+offsetY+")");
+    };
+    
+    function elasticSnapBack(isStarting) {
+        if(((offsetX <= 0) && (offsetY <= 0)) || mouseDown) {
+            return false;
+        }
+        if(isStarting) {
+            elasticDistX = offsetX;
+            elasticDistY = offsetY;
+            elasticDeltaX = 5;
+            elasticDeltaY = elasticDeltaX * (elasticDistY / elasticDistX);
+            if((elasticDistX > 100) || (elasticDistY > 100)) {
+                elasticDeltaT = 2;
+            }
+            else if(elasticDeltaY < 1) {
+                elasticDeltaY = 2;
+            }
+            else {
+                elasticDeltaT = 10;
+            }
+        }
+        if((offsetX < 10) && (offsetY < 10)) {
+            elasticDeltaT = 10;
+            elasticDeltaX = 1;
+            elasticDeltaY = 1;
+        }
+        
+        offsetX -= elasticDeltaX;
+        offsetY -= elasticDeltaY;
+        if(offsetX < 0) {
+            offsetX = 0;
+        }
+        if(offsetY < 0) {
+            offsetY = 0;
+        }
+        return true;
+    }
+    
+    function drawLine(x1, y1, x2, y2, xoff, yoff) {
+        if(!xoff)
+            xoff = 0;
+        if(!yoff)
+            yoff = 0;
+        ctx.moveTo(x1 + xoff, y1 + yoff);
+        ctx.lineTo(x2 + xoff, y2 + yoff);
+        ctx.stroke();
+    }
+    
+    function paintGrid(warpGrid, fstyle, xyoffset) {
+        var xoffset = 0;
+        var yoffset = 0;
+        ctx.strokeStyle = fstyle;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+    
+        var index = 0;
+        for (var row = 0; row < warpGrid.rows; row++) {
+            for (var col = 0; col < warpGrid.cols; col++) {
+                var x = (xoffset + warpGrid.xGrid[index]);
+                var y = (yoffset + warpGrid.yGrid[index]);
+                if (row > 0) 
+                    drawLine(x, y, (xoffset + warpGrid.xGrid[(index - warpGrid.cols)]), (yoffset + warpGrid.yGrid[(index - warpGrid.cols)]), xyoffset, xyoffset); 
+                if (col > 0)
+                    drawLine(x, y, (xoffset + warpGrid.xGrid[(index - 1)]), (yoffset + warpGrid.yGrid[(index - 1)]), xyoffset, xyoffset); 
+                //if ((row != 0) && (col != 0) && (row != warpGrid.rows - 1) && (col != warpGrid.cols - 1))
+                //ctx.fillText("["+index+"="+row+","+col+"]", x + 5, y + 10);
+                index++;
+            } 
+        } 
+        //ctx.endPath();
+    }
+    
+    function paintStretchMarks(srcGrid, dstGrid) {
+        ctx.strokeStyle = touchPointStyle;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+    
+        var index = 0;
+        var cols = srcGrid.cols;
+        var midCol = Math.floor(srcGrid.cols / 2) + 1;
+        for (var row = 1, midRow = Math.floor(srcGrid.rows / 2) + 1; row < midRow; row++) {
+            for (var col = 1; col < midCol; col++) {
+                index = getRowColIndex(row, col, cols);
+                drawLine(srcGrid.xGrid[index], srcGrid.yGrid[index], dstGrid.xGrid[index], dstGrid.yGrid[index]); 
+            } 
+        } 
+    }
+    
+    var stretchJustBegun = false;
+    var stretchPointX = -1;
+    var stretchPointY = -1;
+    var stretchStartX = -1;
+    var stretchStartY = -1;
+    var timestamps = [];
+    var timings = [];
+    
+    function resetTimeIt() {
+        timestamps = [];
+        timings = [];
+    }
+    
+    function timeIt(desc) {
+        timings.push(desc);
+        timestamps.push(new Date().getTime());
+    }
+    
+    function debugTimings() {
+        var str = "";
+        for(var i = 0, n = (timings.length - 1); i < n; i++) {
+            str+="---- "+timings[i] +" - " + timings[i + 1]+" = "+(timestamps[i+1] - timestamps[i])+"ms</br>";
+        }
+        str+="---- total = "+(timestamps[timestamps.length - 1] - timestamps[0])+"ms</br>";
+        debug(str);
+    }
+    
+    function dist(x1, y1, x2, y2) {
+        return Math.sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
+    }
+    
+    function alignXToCol(xGrid, col, rows, cols, val) {
+        var minX = col; // * cols);
+        for(var mx = minX, num = xGrid.length; mx < num; mx+=cols) {
+            xGrid[mx] = val;
+        }
+    }
+    
+    function alignYToRow(yGrid, row, rows, cols, val) {
+        var minY = (row * cols);
+        for(var my = minY, num = minY + cols; my < num; my++) {
+            yGrid[my] = val;
+        }
+    }
+    
+    function copyGrid(srcGrid, dstGrid) {
+        var src = srcGrid.xGrid;
+        var dst = dstGrid.xGrid;
+        var num = srcGrid.rows * srcGrid.cols;
+        for(var i = 0; i < num; i++) {
+            dst[i] = src[i];
+        }
+        src = srcGrid.yGrid;
+        dst = dstGrid.yGrid;
+        for(var i = 0; i < num; i++) {
+            dst[i] = src[i];
+        }
+    }
+    
+    function generate3x3Mesh(ssX, ssY, x, y, srcGrid, dstGrid) {
+        alignXToCol(srcGrid.xGrid, 1, srcGrid.rows, srcGrid.cols, ssX);
+        alignYToRow(srcGrid.yGrid, 1, srcGrid.rows, srcGrid.cols, ssY);
+        
+        alignXToCol(dstGrid.xGrid, 1, dstGrid.rows, dstGrid.cols, ssX);
+        alignYToRow(dstGrid.yGrid, 1, dstGrid.rows, dstGrid.cols, ssY);
+    
+        dstGrid.xGrid[4] = srcGrid.xGrid[4] + (x - ssX);  // x;
+        dstGrid.yGrid[4] = srcGrid.yGrid[4] + (y - ssY);  // y;    
+    }
+    
+    function getRowColIndex(r, c, cols) {
+        return ((r * cols) + c);
+    }
+    
+    function warpUp(i, j, N, M, xOld, yOld, xNew, yNew, dstGrid) {
+        var ix = getRowColIndex(i, j, M);
+        var xc = dstGrid.xGrid[ix];
+        var yc = dstGrid.yGrid[ix];
+        
+        var ratio = (yc / yOld);
+        var xcNew = (xNew * ratio + xc*(1 - ratio));
+        var ycNew = yNew * ratio;
+        dstGrid.xGrid[ix] = xcNew;
+        dstGrid.yGrid[ix] = ycNew;
+        //debug("up: ("+i+","+j+") -> "+ix+" = ("+xc+","+yc+") of ("+xOld+","+yOld+") * " +ratio+" = ("+ xcNew+","+ycNew+") ");
+    }
+    
+    function warpDown(i, j, N, M, xOld, yOld, xNew, yNew, xLim, yLim, dstGrid, dbg) {
+        var ix = getRowColIndex(i, j, M);
+        var xc = dstGrid.xGrid[ix];
+        var yc = dstGrid.yGrid[ix];
+        
+        var ratio = ((yLim - yc) / (yLim - yOld));
+        var xcNew = (xNew * ratio + xc*(1 - ratio));
+        var ycNew = (yNew * ratio + yLim * (1 - ratio));
+        dstGrid.xGrid[ix] = xcNew;
+        dstGrid.yGrid[ix] = ycNew;
+        if(dbg && (dbg.indexOf("5") >= 0)) drawLine(xc, yc, xcNew, ycNew, 1, 1);
+        //debug("down: ("+i+","+j+") -> "+ix+" = ("+xc+","+yc+") of ("+xOld+","+yOld+") * " +ratio+" = ("+ xcNew+","+ycNew+") ");
+    }
+    
+    function warpLeft(i, j, N, M, xOld, yOld, xNew, yNew, dstGrid) {
+        var ix = getRowColIndex(i, j, M);
+        var xc = dstGrid.xGrid[ix];
+        var yc = dstGrid.yGrid[ix];
+        
+        var ratio = (xc / xOld);
+        var xcNew = (xNew * ratio);
+        var ycNew = yNew * ratio + yc*(1 - ratio);
+        dstGrid.xGrid[ix] = xcNew;
+        dstGrid.yGrid[ix] = ycNew;
+        //debug("left: ("+i+","+j+") -> "+ix+" = ("+xc+","+yc+") of ("+xOld+","+yOld+") * " +ratio+" = ("+ xcNew+","+ycNew+") ");
+    }
+    
+    function warpSlant(i, j, N, M, xOld, yOld, xNew, yNew, xAnchor, yAnchor, dstGrid, dbg) {
+        var ix = getRowColIndex(i, j, M);
+        var xc = dstGrid.xGrid[ix];
+        var yc = dstGrid.yGrid[ix];
+        var lineOld = new GeometricLine(xOld, yOld, xc, yc);
+        var xIntercept = 0;
+        var yIntercept = 0;
+        if(xAnchor && yAnchor) {
+            xIntercept = yAnchor;
+            yIntercept = xAnchor;
+        }
+        else {
+            xIntercept = lineOld.yatx(0);  //try xintercept first
+            yIntercept = lineOld.xaty(0);                
+        }
+    
+        var ratio = 0;
+        var xcNew = 0;
+        var ycNew = 0;
+    
+        ctx.strokeStyle = "#0000FF";
+        if(dbg && (dbg.indexOf("1") >= 0)) drawLine(xOld, yOld, xc, yc, 1, 1);
+        
+        var lineNew = null;
+        if(xIntercept < 0) {
+            ratio =  dist(yIntercept, yAnchor, xc, yc) / dist(yIntercept, yAnchor, xOld, yOld);
+            debug("line="+lineOld.toString() +" yIntercept="+yIntercept+","+yAnchor+" ratio="+ratio);
+            xcNew = (xNew * ratio) + (yIntercept*(1 - ratio));
+            ycNew = (yNew * ratio) + (yAnchor*(1 - ratio));;
+    
+            if(dbg && (dbg.indexOf("2") >= 0)) drawLine(xc, yc, xOld, yOld, 1, 1);
+            if(dbg && (dbg.indexOf("3") >= 0)) drawLine(yIntercept, yAnchor, xc, yc, 1, 1);
+            if(dbg && (dbg.indexOf("4") >= 0)) drawLine(yIntercept, yAnchor, xNew, yNew, 1, 1);
+        }
+        else {
+            ratio = dist(xAnchor, xIntercept, xc, yc) / dist(xAnchor, xIntercept, xOld, yOld);
+            debug("line:"+lineOld.toString() +" xIntercept="+xAnchor+","+xIntercept+" ratio="+ratio);
+            xcNew = (xNew * ratio) + (xAnchor*(1 - ratio));
+            ycNew = (yNew * ratio) + (xIntercept*(1 - ratio));
+            
+            if(dbg && (dbg.indexOf("2") >= 0)) drawLine(xc, yc, xOld, yOld, 1, 1);
+            if(dbg && (dbg.indexOf("3") >= 0)) drawLine(xAnchor, xIntercept, xc, yc, 1, 1);
+            if(dbg && (dbg.indexOf("4") >= 0)) drawLine(xAnchor, xIntercept, xNew, yNew, 1, 1);
+        }
+    
+        if(dbg && (dbg.indexOf("5") >= 0)) drawLine(xc, yc, xcNew, ycNew, 2, 2);
+        dstGrid.xGrid[ix] = xcNew;
+        dstGrid.yGrid[ix] = ycNew;
+    }
+    
+    function GeometricLine(x1, y1, x2, y2) {
+        this.x1 = x1;
+        this.y1 = y1;
+        this.x2 = x2;
+        this.y2 = y2;
+        
+        //y = mx + c
+        this.m = (y2 - y1)/(x2 - x1);
+        this.c = y1  - (this.m * x1);
+        //debug("m="+this.m+" c="+this.c);    //+"="+(y2  - (this.m * x2)));
+        
+        this.xaty = function(y) {
+            return ((y - this.c)/this.m);
+        }
+        
+        this.yatx = function(x) {
+            return ((x*this.m) + this.c);
+        }
+        
+        this.toString = function() {
+            return ("[y="+this.m+".x + "+this.c+"], ("+x1+","+y1+"), ("+x2+","+y2+")");
+        }
+    }
+    
+    function generateNxMMesh(N, M, ssX, ssY, x, y, xwin, ywin, w, h, srcGrid, dstGrid) {
+        if((N < 5) || (M < 5)) {
+            throw ("N and M must be > 5 (N="+N+", M="+M+")...");
+        }
+        var limN = N;
+        var limM = M;
+        //let the middle be the ssX/Y
+        var midN = Math.floor(limN/2); 
+        var midM = Math.floor(limM/2);
+    
+        //and arrange the rest equidistantly around midN and midM
+        var stretchDeltaXPre = (ssX / midM);
+        for(var i = 1; i <= midM; i++) {
+            var nextX = (i * stretchDeltaXPre);
+            alignXToCol(srcGrid.xGrid, i, srcGrid.rows, srcGrid.cols, nextX);
+        }
+        
+        var stretchXPost = x;
+        var stretchDeltaXPost = ((w - stretchXPost) / (limM - midM - 1));
+        for(var i = (midM + 1); i < limM; i++) {
+            stretchXPost += stretchDeltaXPost;
+            alignXToCol(srcGrid.xGrid, i, srcGrid.rows, srcGrid.cols, stretchXPost);
+        }
+    
+        var stretchDeltaYPre = (ssY / midN);
+        for(var i = 1; i <= midN; i++) {
+            var nextY = (i * stretchDeltaYPre);
+            alignYToRow(srcGrid.yGrid, i, srcGrid.rows, srcGrid.cols, nextY);
+        }
+    
+        var stretchYPost = y;
+        var stretchDeltaYPost = ((h - stretchYPost) / (limN - midN - 1));
+        for(var i = (midN + 1); i < limN; i++) {
+            stretchYPost += stretchDeltaYPost;
+            alignYToRow(srcGrid.yGrid, i, srcGrid.rows, srcGrid.cols, stretchYPost);
+        }
+    
+        copyGrid(srcGrid, dstGrid);
+    
+        //stretch them out
+        var stretchPointIx = getRowColIndex(midN, midM, M);
+        var xLim = xwin;
+        var yLim = ywin;
+        var xOld = srcGrid.xGrid[stretchPointIx];
+        var yOld = srcGrid.yGrid[stretchPointIx];
+        var xDif = (x - ssX);
+        var yDif = (y - ssY);
+        var xNew = xOld + xDif;  // x;
+        var yNew = yOld + yDif;  // y;
+        
+        //traverse 4 directions
+        //UP
+        for(var i = midN - 1; i > 0; i--) {
+            warpUp(i, midM, N, M, xOld, yOld, xNew, yNew, dstGrid);
+        }
+        
+        //LEFT
+        for(var j = midM - 1; j > 0; j--) {
+            warpLeft(midM, j, N, M, xOld, yOld, xNew, yNew, dstGrid);
+        }
+    
+        //DOWN
+        for(var i = midN + 1; i < (limN - 1); i++) {
+            warpDown(i, midM, N, M, xOld, yOld, xNew, yNew, w, h, dstGrid);
+        }
+        
+        //RIGHT
+        var ixAnchor = getRowColIndex(midN, (M - 1), M);
+        var xAnchor = srcGrid.xGrid[ixAnchor];
+        var yAnchor = srcGrid.yGrid[ixAnchor];
+        for(var j = midM + 1; j < (M - 1); j++) {
+            warpSlant(midN, j, N, M, xOld, yOld, xNew, yNew, xAnchor, yAnchor, dstGrid, "");
+        }
+        
+        //do those in between
+        //UP+LEFT = 4th quadrant
+        for(var i = midN - 1; i > 0; i--) {
+            for(var j = midM - 1; j > 0; j--) {
+                warpSlant(i, j, N, M, xOld, yOld, xNew, yNew, 0, 0, dstGrid);
+            }
+        }
+        
+        //DOWN+LEFT-to-RIGHT = 3rd and 2nd qudrant
+        for(var j = 1; j < (M - 1); j++) { //LEFT
+            if(j == midM) {
+                continue;
+            }
+            var ixAnchor = getRowColIndex((N - 1), j, M);
+            var xAnchor = srcGrid.xGrid[ixAnchor];
+            var yAnchor = srcGrid.yGrid[ixAnchor];
+            var ixFrom = getRowColIndex(midN, j, M);
+            var xFrom  = srcGrid.xGrid[ixFrom];
+            var yFrom  = srcGrid.yGrid[ixFrom];
+            for(var i = (midN + 1); i < (N - 1); i++) { //DOWN
+                var ixTo = getRowColIndex(midN, j, M);
+                var xTo    = dstGrid.xGrid[ixTo];
+                var yTo    = dstGrid.yGrid[ixTo];
+                //debug("down+left+right i="+i+" j="+j);
+                warpDown(i, j, N, M, xFrom, yFrom, xTo, yTo, xAnchor, yAnchor, dstGrid);
+            }
+        }
+    
+        //UP+RIGHT = 1st quadrant
+        for(var j = midM + 1; j < (M - 1); j++) {   //RIGHT
+                var ix = getRowColIndex(midN, j, M);
+                var xFrom  = srcGrid.xGrid[ix];
+                var yFrom  = srcGrid.yGrid[ix];
+                var xTo    = dstGrid.xGrid[ix];
+                var yTo    = dstGrid.yGrid[ix];
+            for(var i= midN - 1; i > 0; i--) { //UP
+                //debug("up+right i="+i+" j="+j);
+                warpUp(i, j, N, M, xFrom, yFrom, xTo, yTo, dstGrid, "34");
+            }
+        }
+    
+        //debug("limN="+limN+" limM="+limM+" midN="+midN+" midM="+midM+" stretchPointIx="+stretchPointIx+"...");
+        dstGrid.xGrid[stretchPointIx] = xNew;
+        dstGrid.yGrid[stretchPointIx] = yNew;    
+    }
+    
+    var imgBackup = null;
+    
+    function stretchContent1D(x, y, recurse) {
+        var distStretched = dist(stretchPointX, stretchPointY, x, y); 
+        debug("distStretched = "+distStretched);
+        stretchPointX = x;
+        stretchPointY = y;
+        var w = canvasElement.width;   //winWidth  - 15;
+        var h = canvasElement.height;   //winHeight - 15;
+    
+        if(imgBackup == null) {
+            //debug("Grabbing img backup: "+ w+", "+h);
+            showTouchPoint(0, 0, true); //hide touch point first
+            //imgBackup = ctx.getImageData(0, 0, w, h); 
+        }
+        
+        //reset content to remove traces previous stretch
+        if(!recurse) {
+            ctx.putImageData(imgContent, 0, 0);
+        }
+    
+        var offset = 0;
+        var pt = 0;
+        if(offsetX > 0) {
+            offset = offsetX;
+            pt = x + 5;
+            //do vertical direction first
+            //if(!recurse) stretchContent1D(-1, y, true);
+        }
+        else if(offsetY > 0) { 
+            offset = offsetY;
+            pt = y + 5;
+        }
+        else {
+            return;
+        }
+    
+        var stretchPoints = [];            
+        var deltaStretch = Math.floor(pt / offset);
+        for(var i = 0; i < offset; i++) {
+            stretchPoints.push((i + 1) * deltaStretch);
+        }
+        debug("distStretched = "+distStretched+" x="+x+" y="+y+" pt="+pt+" offset="+offset+" stretchPoints="+stretchPoints);
+        //grab slices between stretchpoints and repeat them
+        if(offsetX > 0) {
+            for(var i = (stretchPoints.length - 1); i > 0; i--) {
+                var imgSlice = ctx.getImageData(stretchPoints[i], 0, w - stretchPoints[i] - 1, h);
+                //var imgSlice = ctx.getImageData(stretchPoints[i], 0, stretchPoints[i] + i, h);
+                ctx.putImageData(imgSlice, stretchPoints[i]+1, 0);
+                /*if(document.getElementById("show1Dmesh").checked) {
+                    ctx.strokeStyle = "#BBBBBB";
+                    drawLine(stretchPoints[i] + 1, 0, stretchPoints[i] + 1, h, 0, 0);
+                }*/
+            }
+        }
+        else if(offsetY > 0) {
+            for(var i = (stretchPoints.length - 1); i > 0; i--) {
+                var imgSlice = ctx.getImageData(0, stretchPoints[i], w, h - stretchPoints[i] - 1);
+                //var imgSlice = ctx.getImageData(0, stretchPoints[i], w, stretchPoints[i] + i);
+                ctx.putImageData(imgSlice, 0, stretchPoints[i]+1);
+                /*if(document.getElementById("show1Dmesh").checked) {
+                    ctx.strokeStyle = "#BBBBBB";
+                    drawLine(0, stretchPoints[i] + 1, w, stretchPoints[i] + 1, 0, 0);
+                }*/
+            }
+        }
+    }
+    
+    var unstretchSteps = 5;
+    var unstretchCount = 0;
+    var unstretchPointX = 0;
+    var unstretchPointY = 0;
+    function unstretchContent1D(x, y, isStarting) {
+        var distStretched = dist(stretchPointX, stretchPointY, stretchStartX, stretchStartY);
+        if(isStarting) {
+            unstretchCount = unstretchSteps;
+            unstretchPointX = stretchPointX;
+            unstretchPointY = stretchPointY;
+            unstretchContent1D(x, y, false);
+        }
+        else if(unstretchCount > 0) {
+            unstretchCount--;
+            //intermediate reverse stretch
+            var unstretchX = (((unstretchSteps - unstretchCount) * stretchStartX) + (unstretchCount * unstretchPointX))/unstretchSteps;
+            var unstretchY = (((unstretchSteps - unstretchCount) * stretchStartY) + (unstretchCount* unstretchPointY))/unstretchSteps;
+            var str = "distStretched="+distStretched+", unstretching: "+stretchPointX+","+stretchPointY+" -> "+unstretchX+","+unstretchY+" ->  "+stretchStartX+","+stretchStartY+".";
+            stretchContent1D(unstretchX, unstretchY);
+            debug(str);
+            setTimeout(unstretchContent1D, 10);
+        }
+        else {
+            if(imgBackup != null) {
+                //ctx.putImageData(imgBackup, 0, 0);
+                drawContent(0, 0);
+                imgBackup = null;
+            }
+            stretchPointX = -1;
+            stretchPointY = -1;
+            stretchStartX = -1;
+            stretchStartY = -1;
+            stretchJustBegun = false;
+            setTimeout(function(){ drawContent(0, 0); }, 10);
+        }
+    }
+    
+    function stretchContent2D(x, y, forceWarp) {
+        if(!x) {
+            x = stretchPointX;  //mouseX - startX  + contentElement.scrollLeft;
+            y = stretchPointY   //mouseY - startY  + contentElement.scrollTop;
+        }
+    
+        var distStretched = dist(stretchPointX, stretchPointY, x, y); 
+        debug("distStretched = "+distStretched);
+        stretchPointX = x;
+        stretchPointY = y;
+    
+        if(!forceWarp && (stretchJustBegun || (distStretched > 0))) {
+            stretchJustBegun = false;
+            //to avoid too many expensive warps, stretch only when user has slowed down
+            // and skip the first stretch
+            setTimeout(stretchContent2D, 10);
+            return;
+        }
+    
+        resetTimeIt();
+        timeIt("start");
+    
+        var w = activeWidth; 
+        var h = activeHeight; 
+        //var w = winWidth;
+        //var h = winHeight;
+        //var w = 3 * stretchStartX;
+        timeIt("init");
+    
+        if(imgBackup == null) {
+            //debug("Grabbing img backup: "+ w+", "+h);
+            showTouchPoint(0, 0, true); //hide touch point first
+            imgBackup = ctx.getImageData(0, 0, w, h); 
+        }
+        //timeIt("cap");
+        
+        var cols = 7;
+        var rows = 7;
+    
+        var srcGrid = new WarpGrid(rows, cols, w, h);
+        var dstGrid = new WarpGrid(rows, cols, w, h);
+        timeIt("warpinit");
+        
+        if((rows == cols) && (cols == 3)) {
+            generate3x3Mesh(stretchStartX, stretchStartY, x, y, srcGrid, dstGrid);
+        }
+        else {
+            generateNxMMesh(rows, cols, stretchStartX, stretchStartY, x, y, winWidth, winHeight, w, h, srcGrid, dstGrid);
+        }
+        
+        //debug("Warping to " + x+","+y+" srcgrid=["+srcGrid.xGrid+" / "+ srcGrid.yGrid+"] dstgrid=["+dstGrid.xGrid+" / "+ dstGrid.yGrid+"]");
+        timeIt("meshgen");
+        
+        var imgIn = imgContent;
+        //var imgIn = imgBackup;
+        //var imgIn = ctx.getImageData(0, 0, w, h); 
+        //var imgIn = ctx.createImageData(imgBackup); 
+        var inPixels = newIntArray(imgIn.data.length / 4);
+        timeIt("prepack");
+        packToIntArray(imgIn.data, inPixels);
+        timeIt("pack");
+        var imgOut = ctx.createImageData(w, h); 
+        var outPixels = newIntArray(inPixels.length);
+    
+        
+        debug("Warping to " + x+","+y+" srcgrid=["+srcGrid.xGrid+" / "+ srcGrid.yGrid+"] dstgrid=["+dstGrid.xGrid+" / "+ dstGrid.yGrid+"]");
+        timeIt("prewarp");
+        dstGrid.warp(inPixels, w, h, srcGrid, dstGrid, outPixels);
+        timeIt("warp");
+        unpackFromIntArray(outPixels, imgOut.data);
+        timeIt("unpack");
+        ctx.putImageData(imgOut, 0, 0);
+        timeIt("paint");
+    
+        if(document.getElementById("showmesh").checked) {
+            paintGrid(srcGrid, "#FF0000", 0);
+            paintGrid(dstGrid, "#00FF00", 0);
+        }
+        debugTimings();
+    }
+    
+    function unstretchContent2D(x, y, isStarting) {
+        var distStretched = dist(stretchPointX, stretchPointY, stretchStartX, stretchStartY);
+        if(isStarting) {
+            //intermediate reverse stretch
+            var unstretchX = (stretchStartX + stretchPointX)/2;
+            var unstretchY = (stretchStartY + stretchPointY)/2;
+            var str = "distStretched="+distStretched+", unstretching: "+stretchPointX+","+stretchPointY+" -> "+unstretchX+","+unstretchY+" ->  "+stretchStartX+","+stretchStartY+".";
+            stretchContent2D(unstretchX, unstretchY, true);
+            debug(str);
+            setTimeout(unstretchContent2D, 50);
+        }
+        else {
+            if(imgBackup != null) {
+                //ctx.putImageData(imgBackup, 0, 0);
+                drawContent(0, 0);
+                imgBackup = null;
+            }
+            stretchPointX = -1;
+            stretchPointY = -1;
+            stretchStartX = -1;
+            stretchStartY = -1;
+            stretchJustBegun = false;
+            setTimeout(function(){ drawContent(0, 0); }, 10);
+        }
+    }
+
+</script>
+<style>
+    #leftnav {
+        font-size:0.85em; 
+        #width:150px;
+    }
+    
+    #leftnav ul {
+        margin:0px; 
+        padding:0px;
+        border-bottom: 1px solid #AAAAAA;
+        height: 100%;
+    
+    }
+    
+    #leftnav li {
+    list-style: none;
+    color: #666666;
+    cursor: pointer;
+    display: block;
+    height: 25px;
+    line-height: 25px;
+    text-indent: 10px;
+    text-decoration:none;
+    border: 1px solid #AAAAAA;
+    border-bottom: 0px;
+    width:100%;
+    }
+
+    #kanvas {
+    cursor : pointer;
+    }
+
+    #kanvas : active, #kanvas : focus { 
+    cursor: none;
+    }
+
+    #infotbl {
+        font-size:0.85em; 
+    }
+    
+    #infotbl td, #infotbl th {
+        padding: 3px;
+        text-align: right;
+        valign: top;
+        width: 40px;
+    }
+
+</style>    
+</head>
+<body onload="init()" valign="top" halign="center">
+<div id="outer">
+    <div style="position:relative; z-index: 1; left:0px; top:0px; overflow:none; float:left; padding-right:1em; "> 
+        <div id="bg" style="width:255px; height:366px; background:#fff;">
+        <!-- /div>
+        <div id="content" style="position:absolute; left:0px; top:0px; width:255px; height:366px; overflow:scroll"-->
+            <canvas id="kanvas" style="position:absolute; left:0px; top:0px;" width="500" height="520">You're browser does not support the canvas tag</canvas>
+        </div>
+    </div>
+    <div style="position:relative; z-index: 1; left:255px; top:0px; float:left; padding-right:2em">
+        <div id="leftnav">
+            <b>Display</b>
+            <ul>
+            <li>
+                <input type="radio" name="dispgroup" value="imgDisplay" onChange="changeDisplay('image')" checked>Image Display
+            </li>
+            <li>
+                <input type="radio" name="dispgroup" value="txtDisplay" onChange="changeDisplay('text')">Text Display
+            </li>
+            <li>
+                <input type="radio" name="dispgroup" value="imgDisplay" onChange="changeDisplay('mixed')">Text + Image Display
+            </li>
+            </ul>
+            <br/>
+
+            <b>Mode</b>
+            <ul>
+            <li>
+                <input type="radio" name="modegroup" id="stretch1DChk" value="stretch1D" onChange="changeMode('stretch1D')"> 1D Stretch
+                <!-- input type="checkbox" id="show1Dmesh">Show Mesh -->
+            </li>
+            <li>
+                <input type="radio" name="modegroup" id="stretch2DChk" value="stretch2D" onChange="changeMode('stretch2D')"> 2D Stretch
+                <input type="checkbox" id="showmesh">Show Mesh
+            </li>
+            </ul>
+            <input type="checkbox" id="showtouch" checked>Show Touch<br/>
+            <input type="checkbox" id="showdebug" onChange="showDebug()">Show Debug Log
+        </div>
+        <br/>
+        <table border="0" id="infotbl">
+        <tr><td></td>            <td><b>X</b></td>              <td><b>Y</b></td></tr>
+        <tr><td>start</td>       <td id="startX">0</td>         <td id="startY">0</td></tr>
+        <tr><td>offset</td>      <td id="offsetX">0</td>        <td id="offsetY">0</td></tr>
+        <tr><td>mouse</td>       <td id="mouseX">0</td>         <td id="mouseY">0</td></tr>
+        <tr><td>scroll</td>      <td id="scrollTop">0</td>      <td id="scrollLeft">0</td></tr>
+        <tr><td>stretchStart</td><td id="stretchStartX">0</td>  <td id="stretchStartY">0</td></tr>
+        <tr><td>stretchPoint</td><td id="stretchPointX">0</td>  <td id="stretchPointY">0</td></tr>
+        <tr><td>currentMode</td> <td id="currentMode" colspan="2"></td></tr>
+        </table>
+    </div>
+    <div style="top:0px; float: right; float: left; padding-right:1em">
+        <div id="warning" style="position:relative; left:255px; top:0px; width:400px; height:100px; border: 1px solid #AAAAAA; ">
+        </div>
+        <div id="debug"   style="position:relative; left:255px; width:400px; height:300px; overflow:scroll; border: 1px solid #AAAAAA; visibility:hidden; ">
+            <div id="debugCell">DEBUG</div>
+        </div>
+    </div>
+</div>
+</body>
+</html>
