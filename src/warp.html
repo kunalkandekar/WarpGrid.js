@@ -3,14 +3,761 @@
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1">
 <meta name="viewport" content= "user-scalable=no,initial-scale=1.0,	 maximum-scale=1.0">
-<script type="text/javascript" src="./warpgrid.js"></script>
-<script type="text/javascript">
+
+<script id="shader-vs-2D" type="x-shader/x-vertex"> 
+    attribute vec2 aVertexPosition;
+    attribute vec2 aTextureCoord;
+
+    uniform float xOld;
+    uniform float yOld;
+    uniform float xNew;
+    uniform float yNew;
+    uniform float xLim;
+    uniform float yLim;
+
+    varying vec2 vTextureCoord;
+
+    void main(void) {
+        vec2 newVertexPosition = aVertexPosition;
+        vec2 newTextureCoord   = aTextureCoord;
+        if(((xOld != xNew) || (yOld != yNew)) 
+                && (aVertexPosition.x > -1.0) && (aVertexPosition.x < 1.0)
+                && (aVertexPosition.y > -1.0) && (aVertexPosition.y < 1.0)) {
+            newVertexPosition = vec2(-1.0 + (2.0*xNew/xLim), -1.0 + (2.0*(yLim - yNew)/yLim));
+            //newTextureCoord = vec2(0.0 + (xNew/xLim), 0.0 + (yNew/yLim));
+        }
+
+        gl_Position = vec4(newVertexPosition, 0.0, 1.0);
+        vTextureCoord = newTextureCoord;
+    }
+</script>
+
+<script id="shader-vs-1D" type="x-shader/x-vertex"> 
+    attribute vec2 aVertexPosition;
+    attribute vec2 aTextureCoord;
+
+    uniform float xOld;
+    uniform float yOld;
+    uniform float xNew;
+    uniform float yNew;
+    uniform float xLim;
+    uniform float yLim;
+
+    varying vec2 vTextureCoord;
+
+    void main(void) {
+        vec2 newVertexPosition = aVertexPosition;
+        vec2 newTextureCoord   = aTextureCoord;
+        if((xOld != xNew) || (yOld != yNew)) {
+            if(abs(xOld - xNew) > abs(yOld - yNew)) {   //horizontal stretch
+                if((aVertexPosition.x > -1.0) && (aVertexPosition.x < 1.0)) {
+                     newVertexPosition = vec2(-1.0 + (2.0*xNew/xLim), aVertexPosition.y);
+                }
+            }
+            else {  //vertical stretch
+                if((aVertexPosition.y > -1.0) && (aVertexPosition.y < 1.0)) {
+                    newVertexPosition = vec2(aVertexPosition.x, -1.0 + (2.0*(yLim - yNew)/yLim));
+                }
+            }
+        }
+
+        gl_Position = vec4(newVertexPosition, 0.0, 1.0);
+        vTextureCoord = newTextureCoord;
+    }
+</script>
+
+<script id="shader-vs-Mesh" type="x-shader/x-vertex"> 
+    attribute vec2 aVertexPosition;
+    attribute vec2 aNewVertexPosition;
+    attribute vec2 aTextureCoord;
+    attribute vec2 aNewTextureCoord;
+    
+    uniform float xOld;
+    uniform float yOld;
+    uniform float xNew;
+    uniform float yNew;
+    uniform float xLim;
+    uniform float yLim;
+    
+    varying vec2 vTextureCoord;
+
+    void main(void) {
+        vec2 newVertexPosition = vec2(aNewVertexPosition.x, aNewVertexPosition.y);
+        vec2 newTextureCoord   = vec2(aNewTextureCoord.s, aNewTextureCoord.t);
+        gl_Position = vec4(newVertexPosition, 0.0, 1.0);
+        vTextureCoord   = aTextureCoord;
+    }
+</script>
+
+<script id="shader-fs" type="x-shader/x-fragment">
+    precision mediump float;
+    
+    varying vec2 vTextureCoord;
+
+    uniform sampler2D uSampler;
+
+    uniform float xOld;
+    uniform float yOld;
+    uniform float xNew;
+    uniform float yNew;
+    uniform float xLim;
+    uniform float yLim;
+
+    float dist(float x1, float y1, float x2, float y2) {
+        return sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
+    }
+
+    void main(void) {
+        vec2 pt1 = gl_FragCoord.xy;
+        
+        vec2 newTextureCoord = vec2(vTextureCoord.s, vTextureCoord.t);
+        vec4 textColor = texture2D(uSampler, newTextureCoord);
+
+        float alpha = 1.0;
+        if((xOld != xNew) || (yOld != yNew)) {
+            float pointerRadius = 10.0;
+            float d = dist(pt1.x, pt1.y, xNew, yLim - yNew);
+            if((d < (pointerRadius + 1.4)) && (d > (pointerRadius - 1.4))) { 
+                alpha = 0.5;    //highlight pointer
+                //textColor.r = 1.0;
+                //textColor.g = 0.0;
+                textColor.b += 0.1;
+            }
+        }
+
+        gl_FragColor = textColor * alpha;
+    }
+</script>
+
+
+
+<script id="warpgl" type="text/javascript">
+<!-- src="./warpgrid.js"-->
+var paintConfigs = new Object();
+paintConfigs["paint8_2D"]  = ["shader-vs-2D", "shader-fs", paint8];
+paintConfigs["paint8_1D"]  = ["shader-vs-1D", "shader-fs", paint8];
+
+var gl = null;
+var prog = null;
+var width = 0.0;
+var height = 0.0;
+var aspectRatio = 1.0;
+var paintConfig = paintConfigs["paint8_2D"];
+
+function replaceCanvas(renewCtx) {
+    var canvasParentElement = document.getElementById("bg");
+    canvasElement = document.getElementById("kanvas");
+    canvasParentElement.removeChild(canvasElement);
+    canvasParentElement.innerHTML = '<canvas id="kanvas" style="position:absolute; left:0px; top:0px;" width="500" height="520">Your browser does not support the canvas tag</canvas>';
+    canvasElement = document.getElementById("kanvas");
+    activeHeight = canvasElement.height;
+    activeWidth  = canvasElement.width;
+    if(renewCtx) {
+        gl = null;
+        ctx = canvasElement.getContext("2d");
+    }
+    initCanvas();
+}
+
+//some boilerplate code copied and adapted from http://www.klokantech.com/
+function initGL() {
+    try {
+        //remove old canvas first
+        if(ctx != null) {
+            ctx = null;
+            replaceCanvas();
+        }
+        var gl = canvasElement.getContext("webgl") || canvasElement.getContext("experimental-webgl");
+    } catch (err) {
+        console.log(err);
+        debug(err);
+    }
+    return gl;
+}
+
+function shaderProgram(gl, vs, fs) {
+    var prog = gl.createProgram();
+    var addshader = function(type, source) {
+        var s = gl.createShader((type == 'vertex') ? gl.VERTEX_SHADER : gl.FRAGMENT_SHADER);
+        gl.shaderSource(s, source);
+        gl.compileShader(s);
+        if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+            throw "Could not compile "+type+" shader:\n\n"+gl.getShaderInfoLog(s);
+        }
+        gl.attachShader(prog, s);
+    };
+    addshader('vertex', document.getElementById(vs).textContent);
+    addshader('fragment', document.getElementById(fs).textContent);
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+        throw "Could not link the shader program!";
+    }
+    return prog;
+}
+
+function attributeSetFloats(gl, prog, attr_name, rsize, arr) {
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(arr), gl.STATIC_DRAW);
+    var attr = gl.getAttribLocation(prog, attr_name);
+    gl.enableVertexAttribArray(attr);
+    gl.vertexAttribPointer(attr, rsize, gl.FLOAT, false, 0, 0);
+}
+
+
+function initGLDraw(imgData, imgW, imgH) {
+    if (!gl) {
+        gl = initGL();
+        if (!gl) { throw "Your web browser does not support WebGL!"; }
+    }
+    canvasElement = document.getElementById("kanvas");
+    
+    gl.clearColor(1, 1, 1, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+  
+    prog = shaderProgram(gl, paintConfig[0], paintConfig[1]);
+    gl.useProgram(prog);
+
+    prog.xNew = gl.getUniformLocation(prog, "xNew");
+    prog.yNew = gl.getUniformLocation(prog, "yNew");
+    prog.xOld = gl.getUniformLocation(prog, "xOld");
+    prog.yOld = gl.getUniformLocation(prog, "yOld");
+    prog.xLim = gl.getUniformLocation(prog, "xLim");
+    prog.yLim = gl.getUniformLocation(prog, "yLim");
+
+    prog.xNewNorm = gl.getUniformLocation(prog, "xNewNorm");
+    prog.yNewNorm = gl.getUniformLocation(prog, "yNewNorm");
+    prog.xOldNorm = gl.getUniformLocation(prog, "xOldNorm");
+    prog.yOldNorm = gl.getUniformLocation(prog, "yOldNorm");
+    
+    prog.stretchVecM     = gl.getUniformLocation(prog, "stretchVecM");
+    prog.stretchVecC     = gl.getUniformLocation(prog, "stretchVecC");
+    prog.stretchVecAnchX = gl.getUniformLocation(prog, "stretchVecAnchX");
+    prog.stretchVecAnchY = gl.getUniformLocation(prog, "stretchVecAnchY");
+    prog.stretchRatio    = gl.getUniformLocation(prog, "stretchRatio");
+
+    var loadTexture = function(texture, typedPixelArray, wd, ht) {
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+
+        if(typedPixelArray && wd && ht) {
+            //gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, typedPixelArray);
+            console.log("dim="+wd+","+ht+" pix="+typedPixelArray+"=["+typedPixelArray[0]+","+typedPixelArray[1]+","+typedPixelArray[2]+"...");
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, wd, ht, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(typedPixelArray));
+            width  = wd;
+            height = ht;
+            canvasElement = document.getElementById("kanvas");
+            canvasElement.height = ht;
+            canvasElement.width = wd;
+            gl.viewport(0, 0, width, height);
+            //gl.viewport(0, 0, activeWidth, activeHeight);
+        }
+        else {
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,
+                gl.UNSIGNED_BYTE, texture.image);
+            var w = width  = texture.image.width * 1.0;
+            var h = height = texture.image.height * 1.0;
+            
+            canvasElement = document.getElementById("kanvas");
+            canvasElement.height = ht;
+            canvasElement.width = wd;
+            
+            texture.image.height = height = activeHeight = canvasElement.height = canvasElement.width * h/w;
+            texture.image.width  = width = canvasElement.width;
+            gl.viewport(0, 0, canvasElement.width, canvasElement.height);
+        }
+        
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        
+        stretchContentGL(0, 0);
+    };
+    
+    var texture = gl.createTexture();
+    if(imgData && imgW && imgH) {
+        loadTexture(texture, imgData, imgW, imgH);
+    }
+    else {
+        texture.image = new Image();
+        texture.image.onload = function() {
+            loadTexture(texture);
+        }
+        texture.image.src = imgURL;
+    }
+}
+
+function stretchContentGL(x, y) {
+    return paintConfig[2](x, y);
+}
+
+function buildTriangles4(minX, minY, maxX, maxY, midX, midY, indices) {
+    var arr = [
+            maxX, maxY,
+            midX, midY,
+            minX, maxY,
+            midX, midY,
+            minX, minY,
+            midX, midY,
+            maxX, minY,
+            midX, midY,
+            maxX, maxY,
+        ];
+    indices.push.apply(indices, [0, 2, 4, 6]);
+    return arr;
+}
+
+function buildTriangles8(minX, minY, maxX, maxY, midX, midY, indexes) {
+    var arr = [
+            maxX, maxY,           //1st
+            midX, maxY,         //2nd
+            midX, midY,       //3rd
+            minX, maxY,
+            minX, midY,        //4th
+            midX, midY,       //5th
+            minX, minY,
+            midX, minY,        //6th
+            midX, midY,       //7th
+            maxX, minY,
+            maxX, midY,         //8th
+            midX, midY,
+            maxX, maxY
+        ];
+    indexes.push.apply(indexes, [0, 1, 2, 4, 5, 7, 8, 10]);
+    return arr;
+}
+
+function paint4(x, y) {
+    gl.uniform1f(prog.xLim, activeWidth);
+    gl.uniform1f(prog.yLim, activeHeight);
+    gl.uniform1f(prog.xOld, startX);
+    gl.uniform1f(prog.yOld, startY);
+    gl.uniform1f(prog.xNew, x);
+    gl.uniform1f(prog.yNew, y);
+    
+    var nvertices = 9;
+    var vertArr = null;
+    var textArr = null;
+    var indices = [];
+    if((x == 0) && (y == 0)) {
+        // the model (nodes in 2d space)
+        vertArr = buildTriangles4(-1, -1, 1, 1, 0, 0, indices);
+        textArr = buildTriangles4(0, 0, 1, 1, 0.5, 0.5, indices);
+    }
+    else {
+        var vmx = -1.0 + (2 * startX/width);
+        var vmy = -1.0 + (2 * (height - startY)/height);
+        var tmx = (startX/width);
+        var tmy = ((height - startY)/height);        
+
+        vertArr = buildTriangles4(-1, -1, 1, 1, vmx, vmy, indices);
+        textArr = buildTriangles4(0, 0, 1, 1, tmx, tmy, indices);
+    }
+    attributeSetFloats(gl, prog, "aVertexPosition", 2, vertArr);
+    attributeSetFloats(gl, prog, "aTextureCoord", 2, textArr);
+    nvertices = indices.length;
+    for(var i = 0; i < nvertices; i++) {
+        gl.drawArrays(gl.TRIANGLE_STRIP, indices[i], 3);
+    }
+    
+    //gl.drawArrays(gl.TRIANGLE_FAN, 0, np);
+    //gl.drawArrays(gl.LINE_STRIP, 0, np);
+}
+
+function paint8() {
+    gl.uniform1f(prog.xLim, width);
+    gl.uniform1f(prog.yLim, height);
+    gl.uniform1f(prog.xOld, startX);
+    gl.uniform1f(prog.yOld, startY);    //(startX && startY ? height - startY : 0));
+    gl.uniform1f(prog.xNew, mouseX);    //(startX - stretchX));
+    gl.uniform1f(prog.yNew, mouseY); //(mouseX && mouseY ? height - mouseY : 0));   //(startY + stretchY));
+    
+    var nvertices = 13;
+    var vertArr = null;
+    var textArr = null;
+    var indexes = [];
+    if((startX == 0) && (startY == 0)) {
+        // the model (nodes in 2d space)
+        vertArr = buildTriangles8(-1, -1, 1, 1, 0, 0, indexes);
+        textArr = buildTriangles8(0, 0, 1, 1, 0.5, 0.5, indexes);
+    }
+    else {
+        var vmx = -1.0 + (2*startX/width);
+        var vmy = -1.0 + (2*(height - startY)/height);
+        var tmx = (startX/width);
+        var tmy = ((height - startY)/height);        
+
+        vertArr = buildTriangles8(-1, -1, 1, 1, vmx, vmy, indexes);
+        textArr = buildTriangles8(0, 0, 1, 1, tmx, tmy, indexes);
+    }
+    attributeSetFloats(gl, prog, "aVertexPosition", 2, vertArr);
+    attributeSetFloats(gl, prog, "aTextureCoord", 2, textArr);
+
+    for(var i = 0; i < nvertices; i++) {
+        gl.drawArrays(gl.TRIANGLE_STRIP, indexes[i], 3);
+    }
+
+    //gl.drawArrays(gl.TRIANGLES, 0, np);
+    //gl.drawArrays(gl.TRIANGLE_FAN, 0, np);
+    //gl.drawArrays(gl.LINE_STRIP, 0, np);
+}
+</script>
+
+<script id="warpgrid" type="text/javascript">
+
+//image warping stuff
+/*
+    Adopted from Java code by Jerry Huxtable at http://www.jhlabs.com/ip/index.html
+*/
+var m00 = -0.5;
+var m01 =  1.5;
+var m02 = -1.5;
+var m03 =  0.5;
+var m10 =  1.0;
+var m11 = -2.5;
+var m12 =  2.0;
+var m13 = -0.5;
+var m20 = -0.5;
+var m22 =  0.5;
+var m31 =  1.0;
+	
+function setval(arr, val) {
+	for(var i = 0, n = arr.length; i < n; i++) { arr[i] = val; }
+}
+
+//use float32/int32 arrays if browser has them
+var FloatArray = Array;
+if(typeof Float32Array == 'function') { 
+    FloatArray = Float32Array;
+}
+var IntArray = Array;
+if(typeof Int32Array == 'function') { 
+    IntArray = Int32Array;
+}
+
+function newFloatArray(size, defval) {
+   var arr = new FloatArray(size);//Array(size);
+   if(defval) {
+       setval(arr, defval);
+   }
+   return arr;
+}
+
+function newIntArray(size, defval) {
+   var arr = new Int32Array(size);//Array(size);
+   if(defval) {
+       setval(arr, defval);
+   }
+   return arr;
+}	
+    
+function packToIntArray(unpacked, packed) {
+    if(!packed) {
+        packed = newIntArray(unpacked.length / 4);
+    }
+    for(var i = 0, n = packed.length; i < n; i++) {
+        var j = i * 4;
+        packed[i] = (unpacked[j + 3] << 24) |
+					(unpacked[j] << 16) |   
+					(unpacked[j + 1] << 8) |
+					(unpacked[j + 2]);
+    } 
+    //debug("Packed ["+unpacked[0]+","+unpacked[1]+","+unpacked[2]+","+unpacked[2]+"] to "+packed[0]); 
+    return packed;
+}
+
+function unpackFromIntArray(packed, unpacked) {
+    if(!unpacked) {
+        unpacked = newIntArray(packed.length * 4);
+    }
+    var index = 0;
+    for(var i = 0, n = packed.length; i < n; i++) {
+        var rgb = packed[i];
+		unpacked[index++] = (rgb >> 16) & 0xff;
+		unpacked[index++] = (rgb >> 8) & 0xff;
+		unpacked[index++] = (rgb & 0xff);
+		unpacked[index++] = (rgb >> 24) & 0xff;
+    }
+    //debug("Unpacked: " + packed[0]+" to  ["+unpacked[0]+","+unpacked[1]+","+unpacked[2]+","+unpacked[2]+"]"); 
+    return unpacked;
+}
+
+//TODO: Figure out how to port this *properly* to WebGL
+function resample(source, dest, length, offset, stride, out) {
+	//public static void resample(int[] source, int[] dest, int length, int offset, int stride, float[] out)
+	var i = 0, j = 0;
+	var sizfac = 0.0;
+	var inSegment = 0.0;
+	var outSegment = 0.0;
+	var a = 0, r = 0, g = 0, b = 0, nextA = 0, nextR = 0, nextG = 0, nextB = 0;
+	var aSum = 0.0, rSum = 0.0, gSum = 0.0, bSum = 0.0;
+	//float[] in;
+	var srcIndex = offset;
+	var destIndex = offset;
+	var lastIndex = source.length;
+	var rgb = 0;
+
+	var inp = newFloatArray(length+2);
+	i = 0;
+	for (j = 0; j < length; j++) {
+		while (out[i+1] < j)
+			i++;
+		inp[j] = i + 1.0 * (j - out[i]) / (out[i + 1] - out[i]);
+        //inp[j] = clamp( inp[j], 0, length-1 );
+	}
+	inp[length] = length;
+	inp[length+1] = length;
+
+	inSegment  = 1.0;
+	outSegment = inp[1];
+	sizfac = outSegment;
+	aSum = rSum = gSum = bSum = 0.0;
+	rgb = source[srcIndex];
+	a = (rgb >> 24) & 0xff;
+	r = (rgb >> 16) & 0xff;
+	g = (rgb >> 8) & 0xff;
+	b = rgb & 0xff;
+	srcIndex += stride;
+	rgb = source[srcIndex];
+	nextA = (rgb >> 24) & 0xff;
+	nextR = (rgb >> 16) & 0xff;
+	nextG = (rgb >> 8) & 0xff;
+	nextB = rgb & 0xff;
+	srcIndex += stride;
+	i = 1;
+
+	while (i <= length) {
+		var aIntensity = inSegment * a + (1.0 - inSegment) * nextA;
+		var rIntensity = inSegment * r + (1.0 - inSegment) * nextR;
+		var gIntensity = inSegment * g + (1.0 - inSegment) * nextG;
+		var bIntensity = inSegment * b + (1.0 - inSegment) * nextB;
+		if (inSegment < outSegment) {
+			aSum += (aIntensity * inSegment);
+			rSum += (rIntensity * inSegment);
+			gSum += (gIntensity * inSegment);
+			bSum += (bIntensity * inSegment);
+			outSegment -= inSegment;
+			inSegment = 1.0;
+			a = nextA;
+			r = nextR;
+			g = nextG;
+			b = nextB;
+			if (srcIndex < lastIndex)
+				rgb = source[srcIndex];
+			nextA = (rgb >> 24) & 0xff;
+			nextR = (rgb >> 16) & 0xff;
+			nextG = (rgb >> 8) & 0xff;
+			nextB = rgb & 0xff;
+			srcIndex += stride;
+		} else {
+			aSum += (aIntensity * outSegment);
+			rSum += (rIntensity * outSegment);
+			gSum += (gIntensity * outSegment);
+			bSum += (bIntensity * outSegment);
+			dest[destIndex] = 
+				(Math.round(Math.min(aSum/sizfac, 255) << 24)) |
+				(Math.round(Math.min(rSum/sizfac, 255) << 16)) |
+				(Math.round(Math.min(gSum/sizfac, 255) << 8)) |
+				Math.round(Math.min(bSum/sizfac, 255));
+			destIndex += stride;
+			aSum = rSum = gSum = bSum = 0.0;
+			inSegment -= outSegment;
+			outSegment = inp[i+1] - inp[i];
+			sizfac = outSegment;
+			i++;
+		}
+	}
+}
+
+function WarpGrid(rows, cols, w, h) {        	        
+   //public WarpGrid(int rows, int cols, int w, int h) {
+	this.rows = rows;
+	this.cols = cols;
+	this.xGrid = newFloatArray(rows*cols);
+	this.yGrid = newFloatArray(rows*cols);
+	var index = 0;
+	for (var row = 0; row < rows; row++) {
+		for (var col = 0; col < cols; col++) {
+			this.xGrid[index] = 1.0 * (col*(w-1)/(cols-1));
+			this.yGrid[index] = 1.0 * (row*(h-1)/(rows-1));
+			index++;
+		}
+	}
+}
+
+WarpGrid.prototype.warp = function(inPixels, cols, rows, sourceGrid, destGrid, outPixels) {
+   //(int[] inPixels, int cols, int rows, WarpGrid sourceGrid, WarpGrid destGrid, int[] outPixels) {
+    /*try { */
+		var x = 0, y = 0; //int
+		var u = 0, v = 0; //int
+		//var intermediate = new Array();
+		//WarpGrid splines;
+
+		if (sourceGrid.rows != destGrid.rows || sourceGrid.cols != destGrid.cols)
+			throw ("source and destination grids are different sizes");
+
+		var size = Math.max(cols, rows);
+		var xrow = newFloatArray(size);
+		var yrow = newFloatArray(size);
+		var scale  = newFloatArray(size + 1);
+		var interpolated = newFloatArray(size + 1);
+		//init to 0
+		setval(interpolated, 0);
+
+		var gridCols = sourceGrid.cols;
+		var gridRows = sourceGrid.rows;
+
+		splines = new WarpGrid(rows, gridCols, 1, 1);
+
+		for (u = 0; u < gridCols;u++) {
+			var i = u;
+
+			for (v = 0; v < gridRows;v++) {
+				xrow[v] = sourceGrid.xGrid[i];
+				yrow[v] = sourceGrid.yGrid[i];
+				i += gridCols;
+			}
+
+			this.interpolateSpline(yrow, xrow, 0, gridRows, interpolated, 0, rows);
+
+			i = u;
+			for (y = 0;y < rows;y++) {
+				splines.xGrid[i] = interpolated[y];
+				i += gridCols;
+			}
+		}
+
+		for (u = 0; u < gridCols;u++) {
+			var i = u;
+
+			for (v = 0; v < gridRows;v++) {
+				xrow[v] = destGrid.xGrid[i];
+				yrow[v] = destGrid.yGrid[i];
+				i += gridCols;
+			}
+
+			this.interpolateSpline(yrow, xrow, 0, gridRows, interpolated, 0, rows);
+
+			i = u;
+			for (y = 0;y < rows; y++) {
+				splines.yGrid[i] = interpolated[y];
+				i += gridCols;
+			}
+		}
+
+		/* first pass: warp x using splines */
+		intermediate = newIntArray(rows*cols);  //int
+
+		var offset = 0;
+	    timeIt("warp: pre-resample 1 = "+rows);
+	    var interpT = 0;
+	    var resampleT = 0;
+		for (y = 0; y < rows; y++) {
+			/* fit spline to x-intercepts;resample over all cols */
+			var t1 = new Date().getTime();
+			this.interpolateSpline(splines.xGrid, splines.yGrid, offset, gridCols, scale, 0, cols);
+			var t2 = new Date().getTime();
+			scale[cols] = cols;
+			resample(inPixels, intermediate, cols, y*cols, 1, scale);
+			var t3 = new Date().getTime();
+			interpT += (t2 - t1);
+			resampleT += (t3 - t2);
+			offset += gridCols;
+		}
+	    timeIt("warp: resample #"+rows+" (i="+interpT+" + r="+resampleT+") 1");
+
+		/* create table of y-intercepts for intermediate mesh's hor splines */
+
+		splines = new WarpGrid(gridRows, cols, 1, 1);
+
+		offset = 0;
+		var offset2 = 0;
+		for (v = 0; v < gridRows; v++) {
+			this.interpolateSpline(sourceGrid.xGrid, sourceGrid.yGrid, offset, gridCols, splines.xGrid, offset2, cols);
+			offset += gridCols;
+			offset2 += cols;
+		}
+
+		offset = 0;
+		offset2 = 0;
+		for (v = 0; v < gridRows; v++) {
+			this.interpolateSpline(destGrid.xGrid, destGrid.yGrid, offset, gridCols, splines.yGrid, offset2, cols);
+			offset += gridCols;
+			offset2 += cols;
+		}
+        	        
+		/* second pass: warp y */
+	    interpT = 0;
+	    resampleT = 0;
+		for (x = 0; x < cols; x++) {
+			var i = x;
+			
+			for (v = 0; v < gridRows; v++) {
+				xrow[v] = splines.xGrid[i];
+				yrow[v] = splines.yGrid[i];
+				i += cols;
+			}
+			var t1 = new Date().getTime();
+
+			this.interpolateSpline(xrow, yrow, 0, gridRows, scale, 0, rows);
+			var t2 = new Date().getTime();
+			scale[rows] = rows;
+			resample(intermediate, outPixels, rows, x, cols, scale);
+			var t3 = new Date().getTime();
+			interpT += (t2 - t1);
+			resampleT += (t3 - t2);
+		}
+		timeIt("warp: 2ndpass resample #"+rows+" (i="+interpT+" + r="+resampleT+") 1");
+    /*}
+    catch (e) {
+    	debug(e);
+    }*/
+}
+
+WarpGrid.prototype.interpolateSpline = function(xKnots, yKnots, offset, length, splineY, splineOffset, splineLength) {
+//protected void interpolateSpline(float[] xKnots, float[] yKnots, int offset, int length, float[] splineY, int splineOffset, int splineLength) {
+	var index = offset;
+	var end = offset+length-1;
+	var x0 = 0.0, x1 = 0.0;
+	var k0 = 0.0, k1 = 0.0, k2 = 0.0, k3 = 0.0;
+	var c0 = 0.0, c1 = 0.0, c2 = 0.0, c3 = 0.0;
+
+	x0 = xKnots[index];
+	k0 = k1 = k2 = yKnots[index];
+	x1 = xKnots[index+1];
+	k3 = yKnots[index+1];
+
+	for (var i = 0;i < splineLength;i++) {
+		if (index <= end && i > xKnots[index]) {
+			k0 = k1;
+			k1 = k2;
+			k2 = k3;
+			x0 = xKnots[index];
+			index++;
+			if ( index <= end )
+				x1 = xKnots[index];
+			if ( index < end )
+				k3 = yKnots[index+1];
+			else
+				k3 = k2;
+		}
+		t = 1.0 * ((i - x0) / (x1 - x0));
+		c3 = m00*k0 + m01*k1 + m02*k2 + m03*k3;
+		c2 = m10*k0 + m11*k1 + m12*k2 + m13*k3;
+		c1 = m20*k0 + m22*k2;
+		c0 = m31*k1;
+		
+		splineY[splineOffset+i] = ((c3*t + c2)*t + c1)*t + c0;
+	}
+}
+</script>
+<script id="pagescript" type="text/javascript">
     var canvasElement;
     var ctx;
     var debugCell;
     var contentElement;
     
-    var modes = ["stretch2D", "stretch1D"];
+    var modes = ["stretch2D", "stretch1D", "stretchGL2D", "stretchGL1D"];
     var currentMode = "stretch2D"; 
     
     var activeWidth;
@@ -22,14 +769,14 @@
     var winX = 0;
     var winY = 0;
     Element.prototype.leftTopScreen = function () {
-        var x = this.offsetLeft;
-        var y = this.offsetTop;
+        var x = parseInt(this.offsetLeft);
+        var y = parseInt(this.offsetTop);
     
         var element = this.offsetParent;
     
         while (element !== null) {
-            x = parseInt (x) + parseInt (element.offsetLeft);
-            y = parseInt (y) + parseInt (element.offsetTop);
+            x += parseInt (element.offsetLeft);
+            y += parseInt (element.offsetTop);
     
             element = element.offsetParent;
         }
@@ -53,29 +800,85 @@
         drawContent(0, 0);
     }
     
+    function disableDisplayOptions(b) {
+        document.getElementById("imgDisplay").disabled = b;
+        document.getElementById("txtDisplay").disabled = b;
+        document.getElementById("mixDisplay").disabled = b;
+        if(!b) {
+            document.getElementById("imgDisplay").checked  = true;
+        }
+    }
+    
     var showedWarning = false;
     function changeMode(m) {
         currentMode = m;
-        drawContent(0, 0);
+
         contentElement.scrollTop = 0;
         contentElement.scrollLeft = 0;
         updateTable();
         var warnDiv = document.getElementById("warning");
         //if(!showedWarning && (m =="stretch2D")) {
         //  showedWarning = true;
+        disableDisplayOptions(false);
+        document.getElementById("stretch1DChk").checked = false;
+        document.getElementById("stretch2DChk").checked = false;
+        document.getElementById("stretchGL1DChk").checked = false;
+        document.getElementById("stretchGL2DChk").checked = false;
         if(m =="stretch2D") {
-            document.getElementById("stretch1DChk").checked = false;
+            if(gl != null) {
+                replaceCanvas(true);
+            }
+            drawContent(0, 0);
             document.getElementById("stretch2DChk").checked = true;
             warnDiv.innerHTML = ("<font color='RED'>Note that 2D warping is a processor intensive function that can take upto "
                 +"a second (or 5, on an iPad) to compute and render every mouse drag in JavaScript. "
                 +"It would be much faster if implemented using WebGL (work in progress). "
                 +"Please drag your mouse slowly to get more effective results.</font>");
         }
-        else {
+        else if(m =="stretch1D") {
+            if(gl != null) {
+                replaceCanvas(true);
+            }
+            drawContent(0, 0);
             document.getElementById("stretch1DChk").checked = true;
-            document.getElementById("stretch2DChk").checked = false;
             warnDiv.innerHTML = "";
         }
+        else if(m =="stretchGL1D") {
+            //disableDisplayOptions(true);
+            document.getElementById("stretchGL1DChk").checked = true;
+
+            paintConfig = paintConfigs["paint8_1D"];
+
+            initGLDraw(imgContent.data, imgContent.width, imgContent.height);
+            warnDiv.innerHTML = "";
+        }
+        else if(m =="stretchGL2D") {
+            //disableDisplayOptions(true);
+            document.getElementById("stretchGL2DChk").checked = true;
+            paintConfig = paintConfigs["paint8_2D"];
+
+            initGLDraw(imgContent.data, imgContent.width, imgContent.height);
+            warnDiv.innerHTML = "";
+        }
+    }
+
+    function initCanvas() {
+        var absPt = canvasElement.leftTopScreen();
+        absX = absPt.x;
+        absY = absPt.y;
+    
+        var winPt = canvasElement.leftTopScreen();
+        winX = winPt.x;
+        winY = winPt.y;
+
+        activeWidth  = winWidth  = parseInt(canvasElement.width);
+        activeHeight = winHeight = parseInt(canvasElement.height);
+
+        canvasElement.addEventListener("mousedown", onMouseDown, false);
+        canvasElement.addEventListener("mouseup", onMouseUp, false);
+    
+        canvasElement.addEventListener("touchstart", onMouseDown, false);
+        canvasElement.addEventListener("touchend", onMouseUp, false);
     }
     
     function init() {
@@ -94,23 +897,11 @@
     
         canvasElement = document.getElementById("kanvas");
         ctx = canvasElement.getContext("2d");
-    
-        var absPt = canvasElement.leftTopScreen();
-        absX = absPt.x;
-        absY = absPt.y;
-    
-        var winPt = canvasElement.leftTopScreen();
-        winX = winPt.x;
-        winY = winPt.y;
-    
+        
+        initCanvas();
+
         changeDisplay("image");
         changeMode("stretch2D");
-    
-        canvasElement.addEventListener("mousedown", onMouseDown, false);
-        canvasElement.addEventListener("mouseup", onMouseUp, false);
-    
-        canvasElement.addEventListener("touchstart", onMouseDown, false);
-        canvasElement.addEventListener("touchend", onMouseUp, false);
     
         drawContent(0, 0);
         
@@ -125,8 +916,15 @@
     }
     
     function drawBackground() {
-        ctx.fillStyle = "rgb(100,100,100)";
-        ctx.fillRect(0, 0, canvasElement.width, canvasElement.height);
+        if(!ctx) {
+            replaceCanvas(true);
+            ctx.fillStyle = "rgb(100,100,100)";
+            ctx.fillRect(0, 0, canvasElement.width, canvasElement.height);
+        }
+        else {
+            ctx.fillStyle = "rgb(100,100,100)";
+            ctx.fillRect(0, 0, canvasElement.width, canvasElement.height);
+        }
     }
     
     function getLines(c,phrase,maxPxLength,textStyle) {
@@ -221,7 +1019,7 @@
                 
                 activeWidth  = wdraw;   
                 activeHeight = hdraw;
-                imgContent = ctx.getImageData(0, 0, canvasElement.width, canvasElement.height); 
+                imgContent = ctx.getImageData(0, 0, activeWidth, activeHeight); 
             };  
             img.src = imgURL;
         }
@@ -393,14 +1191,17 @@
         canvasElement.addEventListener("mousemove", onMouseMove, false);
         canvasElement.addEventListener("touchmove", onMouseMove, false);
         mouseDown = true;
-        showTouchPoint(x, y);
+        if((currentMode == "stretch1D") || (currentMode == "stretch2D")) {
+            showTouchPoint(x, y);
+        }
         updateTable();
     };
         
     function releaseDrag(x, y) {
-        startX = startY = 0;
+        startX = startY = mouseX = mouseY = 0;
         debug("Mouse up at "+x+","+y);
         canvasElement.removeEventListener("mousemove", onMouseMove);
+        canvasElement.removeEventListener("touchmove", onMouseMove);
         mouseDown = false;
         if(currentMode == "stretch2D") {
             if(stretchStartX >= 0) {
@@ -419,6 +1220,9 @@
             else {
                 drawContent(0, 0);
             }
+        }
+        else {
+            stretchContentGL(0, 0);
         }
         updateTable();
     }
@@ -464,6 +1268,7 @@
                 debug("Stretch started at "+stretchStartX+","+stretchStartY+" as opposed to "+startX+","+startY);
             }
             stretchContent2D(x + contentElement.scrollLeft, y + contentElement.scrollTop);
+            showTouchPoint(x, y);
         }
         else if(currentMode == "stretch1D") {
             if(stretchStartX < 0) {
@@ -473,8 +1278,11 @@
                 debug("Stretch started at "+stretchStartX+","+stretchStartY+" as opposed to "+startX+","+startY);
             }
             stretchContent1D(x + contentElement.scrollLeft, y + contentElement.scrollTop);
+            showTouchPoint(x, y);
         }
-        showTouchPoint(x, y);
+        else {
+            stretchContentGL(x, y);
+        }
         updateTable();
         //debug("Mouse moved ("+deltaX+","+deltaY+") to "+x+","+y+", offset=("+offsetX+", "+offsetY+")");
     };
@@ -699,10 +1507,9 @@
         var xcNew = 0;
         var ycNew = 0;
     
-        ctx.strokeStyle = "#0000FF";
+        if(dbg) ctx.strokeStyle = "#0000FF";
         if(dbg && (dbg.indexOf("1") >= 0)) drawLine(xOld, yOld, xc, yc, 1, 1);
         
-        var lineNew = null;
         if(xIntercept < 0) {
             ratio =  dist(yIntercept, yAnchor, xc, yc) / dist(yIntercept, yAnchor, xOld, yOld);
             debug("line="+lineOld.toString() +" yIntercept="+yIntercept+","+yAnchor+" ratio="+ratio);
@@ -978,6 +1785,9 @@
         }
     }
     
+    var inPixels = null;
+    var outPixels = null;
+    var useWebGL = false;
     function stretchContent2D(x, y, forceWarp) {
         if(!x) {
             x = stretchPointX;  //mouseX - startX  + contentElement.scrollLeft;
@@ -1035,20 +1845,26 @@
         //var imgIn = imgBackup;
         //var imgIn = ctx.getImageData(0, 0, w, h); 
         //var imgIn = ctx.createImageData(imgBackup); 
-        var inPixels = newIntArray(imgIn.data.length / 4);
-        timeIt("prepack");
-        packToIntArray(imgIn.data, inPixels);
-        timeIt("pack");
         var imgOut = ctx.createImageData(w, h); 
-        var outPixels = newIntArray(inPixels.length);
-    
-        
-        debug("Warping to " + x+","+y+" srcgrid=["+srcGrid.xGrid+" / "+ srcGrid.yGrid+"] dstgrid=["+dstGrid.xGrid+" / "+ dstGrid.yGrid+"]");
-        timeIt("prewarp");
-        dstGrid.warp(inPixels, w, h, srcGrid, dstGrid, outPixels);
-        timeIt("warp");
-        unpackFromIntArray(outPixels, imgOut.data);
-        timeIt("unpack");
+
+        if(!useWebGL) {
+            inPixels = newIntArray(imgIn.data.length / 4);
+            outPixels = newIntArray(inPixels.length);
+            timeIt("prepack");
+            packToIntArray(imgIn.data, inPixels);
+            timeIt("pack");            
+            debug("Warping to " + x+","+y+" srcgrid=["+srcGrid.xGrid+" / "+ srcGrid.yGrid+"] dstgrid=["+dstGrid.xGrid+" / "+ dstGrid.yGrid+"]");
+            timeIt("prewarp");
+            dstGrid.warp(inPixels, w, h, srcGrid, dstGrid, outPixels);
+            timeIt("warp");
+            unpackFromIntArray(outPixels, imgOut.data);
+            timeIt("unpack");
+        }
+        else {
+            packToTextureBuffer(imgIn.data, txtrBufferIn);
+            dstGrid.warpGL(txtrBufferIn, w, h, srcGrid, dstGrid, txtrBufferOut);
+            unpackFromTextureBuffer(txtrBufferOut, imgOut.data);
+        }
         ctx.putImageData(imgOut, 0, 0);
         timeIt("paint");
     
@@ -1084,7 +1900,6 @@
             setTimeout(function(){ drawContent(0, 0); }, 10);
         }
     }
-
 </script>
 <style>
     #leftnav {
@@ -1141,7 +1956,7 @@
         <div id="bg" style="width:255px; height:366px; background:#fff;">
         <!-- /div>
         <div id="content" style="position:absolute; left:0px; top:0px; width:255px; height:366px; overflow:scroll"-->
-            <canvas id="kanvas" style="position:absolute; left:0px; top:0px;" width="500" height="520">You're browser does not support the canvas tag</canvas>
+            <canvas id="kanvas" style="position:absolute; left:0px; top:0px;" width="500" height="520">Your browser does not support the canvas tag</canvas>
         </div>
     </div>
     <div style="position:relative; z-index: 1; left:255px; top:0px; float:left; padding-right:2em">
@@ -1149,13 +1964,13 @@
             <b>Display</b>
             <ul>
             <li>
-                <input type="radio" name="dispgroup" value="imgDisplay" onChange="changeDisplay('image')" checked>Image Display
+                <input type="radio" name="dispgroup" id="imgDisplay" value="imgDisplay" onChange="changeDisplay('image')" checked>Image Display
             </li>
             <li>
-                <input type="radio" name="dispgroup" value="txtDisplay" onChange="changeDisplay('text')">Text Display
+                <input type="radio" name="dispgroup" id="txtDisplay" value="txtDisplay" onChange="changeDisplay('text')">Text Display
             </li>
             <li>
-                <input type="radio" name="dispgroup" value="imgDisplay" onChange="changeDisplay('mixed')">Text + Image Display
+                <input type="radio" name="dispgroup" id="mixDisplay" value="mixDisplay" onChange="changeDisplay('mixed')">Text + Image Display
             </li>
             </ul>
             <br/>
@@ -1169,6 +1984,12 @@
             <li>
                 <input type="radio" name="modegroup" id="stretch2DChk" value="stretch2D" onChange="changeMode('stretch2D')"> 2D Stretch
                 <input type="checkbox" id="showmesh">Show Mesh
+            </li>
+            <li>
+                <input type="radio" name="modegroup" id="stretchGL1DChk" value="stretchGL1D" onChange="changeMode('stretchGL1D')"> WebGL 1D Stretch
+            </li>
+            <li>
+                <input type="radio" name="modegroup" id="stretchGL2DChk" value="stretchGL2D" onChange="changeMode('stretchGL2D')"> WebGL 2D Stretch
             </li>
             </ul>
             <input type="checkbox" id="showtouch" checked>Show Touch<br/>
